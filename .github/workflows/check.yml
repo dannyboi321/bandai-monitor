@@ -1,0 +1,41 @@
+name: Bandai TCG+ Tournament Check
+
+on:
+  schedule:
+    # Runs every 10 minutes. GitHub's scheduler is "best effort" and can
+    # occasionally lag during high load — see README for details.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}   # lets you trigger a manual run from the Actions tab
+
+permissions:
+  contents: write   # needed so the workflow can commit updated seen.json
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Run monitor
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python scripts/monitor.py
+
+      - name: Commit updated seen.json
+        run: |
+          git config user.name "bandai-monitor-bot"
+          git config user.email "actions@github.com"
+          git add seen.json
+          git diff --quiet --cached || git commit -m "Update seen tournaments [skip ci]"
+          git push
