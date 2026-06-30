@@ -1,0 +1,21 @@
+# Bandai TCG+ Tournament Monitor — Configuration
+#
+# Edit this file to control what you get notified about.
+# Changes take effect on the next scheduled run (no code changes needed).
+
+game: "One Piece Card Game"
+
+region: "California"
+
+# List the exact store names you want to be notified about.
+# Comment a line out with "#" to temporarily pause alerts for that store
+# without deleting it. Store names must match what appears on the
+# Bandai TCG+ listing (run scripts/list_stores.py once to get exact names).
+stores:
+  - "EXAMPLE STORE NAME 1"
+  - "EXAMPLE STORE NAME 2"
+  # - "EXAMPLE STORE NAME 3 (currently paused)"
+
+# How far ahead to look, in days. Tournaments further out than this are
+# ignored (set high if you want everything).
+lookahead_days: 60
