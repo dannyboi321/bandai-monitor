@@ -63,6 +63,16 @@ def send_discord_notification(message: str):
         print(f"Failed to send Discord notification: {e}", file=sys.stderr)
 
 
+def dismiss_cookie_banner(page):
+    """Dismisses the OneTrust cookie consent banner, which otherwise sits
+    on top of the page and blocks clicks on everything underneath it."""
+    try:
+        page.click("#onetrust-accept-btn-handler", timeout=8000)
+        page.wait_for_timeout(500)
+    except Exception:
+        print("No cookie consent banner found — may already be dismissed.")
+
+
 def handle_language_select(page):
     """Handles the 'Select Language' popup that appears on first visit.
 
@@ -162,6 +172,10 @@ def scrape_tournaments(page, config):
     "date": ..., "url": ...}, ...]
     """
     page.goto(BASE_URL, wait_until="networkidle")
+
+    dismiss_cookie_banner(page)
+    if DEBUG_MODE:
+        page.screenshot(path="debug_0_after_cookie_dismiss.png")
 
     handle_language_select(page)
     if DEBUG_MODE:
