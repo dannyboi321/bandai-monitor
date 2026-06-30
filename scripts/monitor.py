@@ -4,12 +4,6 @@ Bandai TCG+ Tournament Monitor
 Scrapes the One Piece Card Game tournament listings on bandai-tcg-plus.com,
 filters to stores configured in config.yml, and sends a Discord notification
 for any tournament not previously seen (tracked in seen.json).
-
-IMPORTANT: The CSS selectors below are best-effort placeholders based on
-common patterns for this type of site. bandai-tcg-plus.com is a JS-rendered
-single page app with no public API documentation, so the selectors almost
-certainly need adjustment after the first real run. See README.md for the
-"debug mode" instructions to capture the real page structure and fix them.
 """
 
 import json
@@ -27,6 +21,9 @@ DEBUG_DUMP = Path("debug_page_dump.html")
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 DEBUG_MODE = os.environ.get("DEBUG_MODE", "false").lower() == "true"
+
+BANDAI_EMAIL = os.environ.get("BANDAI_EMAIL")
+BANDAI_PASSWORD = os.environ.get("BANDAI_PASSWORD")
 
 
 def load_config():
@@ -66,40 +63,137 @@ def send_discord_notification(message: str):
         print(f"Failed to send Discord notification: {e}", file=sys.stderr)
 
 
+def handle_language_select(page):
+    """Handles the 'Select Language' popup that appears on first visit.
+
+    Real element IDs confirmed via DevTools inspection:
+      - Region dropdown: select#wpModal-country
+      - Game Title dropdown: select#wpModal-gemeTitle (depends on Region
+        being set first — it's disabled/empty until then)
+      - Accept checkbox: input#agreeMessageCheckbox
+    """
+    try:
+        page.wait_for_selector("text=Select Language", timeout=8000)
+    except Exception:
+        print("No 'Select Language' popup appeared — may already be set.")
+        return
+
+    try:
+        page.select_option("select#wpModal-country", label="United States of America")
+    except Exception as e:
+        print(f"Could not set Region: {e}")
+
+    try:
+        page.wait_for_function(
+            "document.querySelector('#wpModal-gemeTitle') && "
+            "!document.querySelector('#wpModal-gemeTitle').disabled",
+            timeout=15000,
+        )
+        page.select_option("select#wpModal-gemeTitle", label="ONE PIECE CARD GAME (English)")
+    except Exception as e:
+        print(f"Could not set Game Title: {e}")
+
+    try:
+        page.check("input#agreeMessageCheckbox")
+    except Exception as e:
+        print(f"Could not check accept checkbox: {e}")
+
+    try:
+        page.click("text=Selection")
+        page.wait_for_load_state("networkidle")
+    except Exception as e:
+        print(f"Could not click Selection button: {e}")
+
+
+def close_news_popup(page):
+    """Closes the 'News' popup modal if it appears."""
+    try:
+        page.click("[aria-label='close']", timeout=3000)
+    except Exception:
+        pass
+
+
+def login(page):
+    """
+    Logs into Bandai Namco ID. Full flow based on the real site:
+    1. Click 'Login' in the header
+    2. Click 'Log In w/ Bandai Namco ID' in the modal
+    3. Fill email/password on the bandainamcoid.com page, submit
+    4. Skip the optional passkey prompt if it appears
+    """
+    if not BANDAI_EMAIL or not BANDAI_PASSWORD:
+        print("No BANDAI_EMAIL/BANDAI_PASSWORD set — skipping login.")
+        return
+
+    try:
+        page.click("text=Login", timeout=5000)
+    except Exception:
+        print("Could not find 'Login' button — page structure may differ.")
+        return
+
+    try:
+        page.click("text=Log In w/ Bandai Namco ID", timeout=5000)
+        page.wait_for_load_state("networkidle")
+    except Exception as e:
+        print(f"Could not click 'Log In w/ Bandai Namco ID': {e}")
+        return
+
+    try:
+        page.fill("input[type='email'], input[name='email']", BANDAI_EMAIL)
+        page.fill("input[type='password'], input[name='password']", BANDAI_PASSWORD)
+        page.keyboard.press("Enter")
+        page.wait_for_load_state("networkidle")
+    except Exception as e:
+        print(f"Login form fill/submit failed: {e}")
+        return
+
+    try:
+        page.click("text=Later", timeout=4000)
+        page.wait_for_load_state("networkidle")
+    except Exception:
+        pass
+
+    print("Login flow completed.")
+
+
 def scrape_tournaments(page, config):
     """
     Returns a list of dicts: [{"id": ..., "name": ..., "store": ...,
     "date": ..., "url": ...}, ...]
-
-    PLACEHOLDER LOGIC — needs real selectors once we inspect the live site.
     """
     page.goto(BASE_URL, wait_until="networkidle")
 
-    # --- Step 1: select the game title (One Piece Card Game) ---
-    try:
-        page.click("text=One Piece", timeout=5000)
-    except Exception:
-        print("Could not click 'One Piece' selector — page structure may differ.")
+    handle_language_select(page)
+    if DEBUG_MODE:
+        page.screenshot(path="debug_1_after_language.png")
 
-    # --- Step 2: navigate to event search ---
-    try:
-        page.click("text=Search Events", timeout=5000)
-    except Exception:
-        print("Could not find 'Search Events' link — page structure may differ.")
+    close_news_popup(page)
+    if DEBUG_MODE:
+        page.screenshot(path="debug_2_after_news_close.png")
 
-    # --- Step 3: filter by region/state (California) ---
+    login(page)
+    if DEBUG_MODE:
+        page.screenshot(path="debug_3_after_login.png")
+
+    try:
+        page.click("text=Event Search", timeout=5000)
+        page.wait_for_load_state("networkidle")
+    except Exception:
+        print("Could not find 'Event Search' link — page structure may differ.")
+    if DEBUG_MODE:
+        page.screenshot(path="debug_4_after_event_search_click.png")
+
     try:
         page.fill("input[name='area']", config.get("region", ""))
         page.keyboard.press("Enter")
         page.wait_for_load_state("networkidle")
     except Exception:
-        print("Could not filter by region — page structure may differ.")
+        print("Could not filter by region — page structure may differ (expected for now).")
 
     if DEBUG_MODE:
-        DEBUG_DUMP.write_text(page.content())
+        DEBUG_DUMP.write_text(page.content(), encoding="utf-8")
         print(f"Debug mode: dumped rendered HTML to {DEBUG_DUMP}")
 
-    # --- Step 4: scrape result cards ---
     cards = page.query_selector_all(".event-card")
     results = []
     for card in cards:
