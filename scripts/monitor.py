@@ -109,24 +109,40 @@ def handle_language_select(page):
 
 def close_news_popup(page):
     """Closes the 'News' popup modal if it appears.
-    Tries Escape key first, then clicks the backdrop outside the modal."""
+    Uses JavaScript to forcibly remove it since clicking outside/Escape
+    has proven unreliable in headless mode."""
     try:
         page.wait_for_selector(".modal", timeout=3000)
     except Exception:
         return  # no modal visible, nothing to do
 
+    # First try clicking any button inside the modal (e.g. a close/OK button)
     try:
-        page.keyboard.press("Escape")
+        page.evaluate("""
+            const modal = document.querySelector('.modal');
+            if (modal) {
+                const buttons = modal.querySelectorAll('button, [role=button], .btn');
+                if (buttons.length > 0) {
+                    buttons[buttons.length - 1].click();
+                }
+            }
+        """)
         page.wait_for_timeout(500)
         if not page.is_visible(".modal"):
             return
     except Exception:
         pass
 
-    # Fallback: click outside the modal box (top-left corner of screen)
+    # Fallback: forcibly remove the modal via JavaScript
     try:
-        page.mouse.click(50, 50)
-        page.wait_for_timeout(500)
+        page.evaluate("""
+            const modal = document.querySelector('.modal');
+            if (modal) modal.remove();
+            const overlay = document.querySelector('.modalOverlay, .overlay, .backdrop');
+            if (overlay) overlay.remove();
+            document.body.style.overflow = 'auto';
+        """)
+        page.wait_for_timeout(300)
     except Exception:
         pass
 
