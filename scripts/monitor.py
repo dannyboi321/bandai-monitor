@@ -108,15 +108,12 @@ def handle_language_select(page):
 
 
 def close_news_popup(page):
-    """Closes the 'News' popup modal if it appears.
-    Uses JavaScript to forcibly remove it since clicking outside/Escape
-    has proven unreliable in headless mode."""
+    """Closes the 'News' popup modal if it appears."""
     try:
         page.wait_for_selector(".modal", timeout=3000)
     except Exception:
-        return  # no modal visible, nothing to do
+        return
 
-    # First try clicking any button inside the modal (e.g. a close/OK button)
     try:
         page.evaluate("""
             const modal = document.querySelector('.modal');
@@ -133,7 +130,6 @@ def close_news_popup(page):
     except Exception:
         pass
 
-    # Fallback: forcibly remove the modal via JavaScript
     try:
         page.evaluate("""
             const modal = document.querySelector('.modal');
@@ -181,11 +177,14 @@ def login(page):
         print(f"Login form fill/submit failed: {e}")
         return
 
+    # Optional passkey prompt — skip it if it shows up
+    # This appears on account.bandainamcoid.com after successful login
     try:
-        page.click("text=Later", timeout=4000)
+        page.wait_for_selector("text=Later", timeout=8000)
+        page.click("text=Later")
         page.wait_for_load_state("networkidle")
     except Exception:
-        pass
+        pass  # no passkey prompt shown, that's fine
 
     print("Login flow completed.")
 
