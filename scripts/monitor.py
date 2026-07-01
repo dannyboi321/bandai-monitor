@@ -64,8 +64,7 @@ def send_discord_notification(message: str):
 
 
 def dismiss_cookie_banner(page):
-    """Dismisses the OneTrust cookie consent banner, which otherwise sits
-    on top of the page and blocks clicks on everything underneath it."""
+    """Dismisses the OneTrust cookie consent banner."""
     try:
         page.click("#onetrust-accept-btn-handler", timeout=8000)
         page.wait_for_timeout(500)
@@ -74,14 +73,7 @@ def dismiss_cookie_banner(page):
 
 
 def handle_language_select(page):
-    """Handles the 'Select Language' popup that appears on first visit.
-
-    Real element IDs confirmed via DevTools inspection:
-      - Region dropdown: select#wpModal-country
-      - Game Title dropdown: select#wpModal-gemeTitle (depends on Region
-        being set first — it's disabled/empty until then)
-      - Accept checkbox: input#agreeMessageCheckbox
-    """
+    """Handles the 'Select Language' popup that appears on first visit."""
     try:
         page.wait_for_selector("text=Select Language", timeout=8000)
     except Exception:
@@ -116,9 +108,25 @@ def handle_language_select(page):
 
 
 def close_news_popup(page):
-    """Closes the 'News' popup modal if it appears."""
+    """Closes the 'News' popup modal if it appears.
+    Tries Escape key first, then clicks the backdrop outside the modal."""
     try:
-        page.click("[aria-label='close']", timeout=3000)
+        page.wait_for_selector(".modal", timeout=3000)
+    except Exception:
+        return  # no modal visible, nothing to do
+
+    try:
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(500)
+        if not page.is_visible(".modal"):
+            return
+    except Exception:
+        pass
+
+    # Fallback: click outside the modal box (top-left corner of screen)
+    try:
+        page.mouse.click(50, 50)
+        page.wait_for_timeout(500)
     except Exception:
         pass
 
