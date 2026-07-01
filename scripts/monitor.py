@@ -108,7 +108,7 @@ def handle_language_select(page):
 
 
 def close_news_popup(page):
-    """Closes the 'News' popup modal if it appears."""
+    """Closes the News popup modal using JavaScript."""
     try:
         page.wait_for_selector(".modal", timeout=3000)
     except Exception:
@@ -144,13 +144,7 @@ def close_news_popup(page):
 
 
 def login(page):
-    """
-    Logs into Bandai Namco ID. Full flow based on the real site:
-    1. Click 'Login' in the header
-    2. Click 'Log In w/ Bandai Namco ID' in the modal
-    3. Fill email/password on the bandainamcoid.com page, submit
-    4. Skip the optional passkey prompt if it appears
-    """
+    """Logs into Bandai Namco ID."""
     if not BANDAI_EMAIL or not BANDAI_PASSWORD:
         print("No BANDAI_EMAIL/BANDAI_PASSWORD set — skipping login.")
         return
@@ -177,22 +171,21 @@ def login(page):
         print(f"Login form fill/submit failed: {e}")
         return
 
-    # Optional passkey prompt — skip it if it shows up
-    # This appears on account.bandainamcoid.com after successful login
     try:
         page.wait_for_selector("text=Later", timeout=8000)
         page.click("text=Later")
         page.wait_for_load_state("networkidle")
     except Exception:
-        pass  # no passkey prompt shown, that's fine
+        pass
 
     print("Login flow completed.")
 
 
 def scrape_tournaments(page, config):
     """
-    Returns a list of dicts: [{"id": ..., "name": ..., "store": ...,
-    "date": ..., "url": ...}, ...]
+    Flow: Others > Store Search > Filter by Favorite Stores > Search >
+    click 'Search for events at this store' for each favorited store >
+    scrape event cards using real class names confirmed via DevTools.
     """
     page.goto(BASE_URL, wait_until="networkidle")
 
@@ -212,52 +205,90 @@ def scrape_tournaments(page, config):
     if DEBUG_MODE:
         page.screenshot(path="debug_3_after_login.png")
 
+    # --- Step 4: Others > Store Search ---
     try:
-        page.click("text=Event Search", timeout=5000)
+        page.click("text=Others", timeout=5000)
         page.wait_for_load_state("networkidle")
-    except Exception:
-        print("Could not find 'Event Search' link — page structure may differ.")
+        page.click("text=Store Search", timeout=5000)
+        page.wait_for_load_state("networkidle")
+    except Exception as e:
+        print(f"Could not navigate to Store Search: {e}")
     if DEBUG_MODE:
-        page.screenshot(path="debug_4_after_event_search_click.png")
+        page.screenshot(path="debug_4_store_search.png")
+
+    # --- Step 5: Filter by Favorite Stores and Search ---
+    try:
+        page.check("input[type='checkbox']", timeout=3000)
+    except Exception:
+        try:
+            page.click("label:has-text('Filter by Favorite Stores')", timeout=5000)
+        except Exception as e:
+            print(f"Could not check Favorite Stores filter: {e}")
 
     try:
-        page.fill("input[name='area']", config.get("region", ""))
-        page.keyboard.press("Enter")
+        page.click("button:has-text('Search')", timeout=5000)
         page.wait_for_load_state("networkidle")
-    except Exception:
-        print("Could not filter by region — page structure may differ (expected for now).")
+    except Exception as e:
+        print(f"Could not click Search: {e}")
+    if DEBUG_MODE:
+        page.screenshot(path="debug_5_after_store_search.png")
+
+    # --- Step 6: For each store click "Search for events at this store" ---
+    results = []
+    try:
+        buttons = page.query_selector_all("text=Search for events at this store")
+        count = len(buttons)
+        print(f"Found {count} favorite store(s).")
+
+        for i in range(count):
+            btns = page.query_selector_all("text=Search for events at this store")
+            if i >= len(btns):
+                break
+            btns[i].click()
+            page.wait_for_load_state("networkidle")
+            if DEBUG_MODE:
+                page.screenshot(path=f"debug_store_{i}_events.png")
+
+            # Real class names confirmed via DevTools inspection
+            cards = page.query_selector_all("li.event-item")
+            print(f"  Store {i}: found {len(cards)} event card(s).")
+
+            for card in cards:
+                try:
+                    name_el = card.query_selector(".event-name-link")
+                    name = name_el.inner_text().strip() if name_el else "Unknown"
+                    store_el = card.query_selector("a[href*='organizer']")
+                    store = store_el.inner_text().strip() if store_el else "Unknown"
+                    date_el = card.query_selector(".event-date")
+                    date = date_el.inner_text().strip() if date_el else "Unknown"
+                    link_el = card.query_selector("a[href*='/event/']")
+                    href = link_el.get_attribute("href") if link_el else ""
+                    event_id = href.split("/event/")[-1].split("?")[0] if href else f"{name}-{date}"
+                    results.append({
+                        "id": event_id,
+                        "name": name,
+                        "store": store,
+                        "date": date,
+                        "url": "https://www.bandai-tcg-plus.com" + href if href and href.startswith("/") else href or BASE_URL,
+                    })
+                except Exception as e:
+                    print(f"  Skipping card: {e}")
+
+            page.go_back()
+            page.wait_for_load_state("networkidle")
+
+    except Exception as e:
+        print(f"Error scraping store events: {e}")
 
     if DEBUG_MODE:
         DEBUG_DUMP.write_text(page.content(), encoding="utf-8")
         print(f"Debug mode: dumped rendered HTML to {DEBUG_DUMP}")
 
-    cards = page.query_selector_all(".event-card")
-    results = []
-    for card in cards:
-        try:
-            name = card.query_selector(".event-name").inner_text().strip()
-            store = card.query_selector(".event-store").inner_text().strip()
-            date = card.query_selector(".event-date").inner_text().strip()
-            link_el = card.query_selector("a")
-            href = link_el.get_attribute("href") if link_el else ""
-            event_id = href.split("/")[-1] if href else f"{name}-{store}-{date}"
-            results.append(
-                {
-                    "id": event_id,
-                    "name": name,
-                    "store": store,
-                    "date": date,
-                    "url": BASE_URL.rstrip("/") + href if href else BASE_URL,
-                }
-            )
-        except Exception as e:
-            print(f"Skipping a card due to parse error: {e}")
     return results
 
 
 def main():
     config = load_config()
-    wanted_stores = {s.strip().lower() for s in config.get("stores", []) if s and not str(s).startswith("#")}
     seen = load_seen()
 
     with sync_playwright() as p:
@@ -266,13 +297,10 @@ def main():
         tournaments = scrape_tournaments(page, config)
         browser.close()
 
-    print(f"Scraped {len(tournaments)} total tournaments before store filtering.")
+    print(f"Scraped {len(tournaments)} total tournaments.")
 
     new_count = 0
     for t in tournaments:
-        if wanted_stores and t["store"].strip().lower() not in wanted_stores:
-            continue
-
         if t["id"] not in seen:
             new_count += 1
             message = (
