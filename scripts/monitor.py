@@ -2,8 +2,7 @@
 Bandai TCG+ Tournament Monitor
 
 Scrapes the One Piece Card Game tournament listings on bandai-tcg-plus.com,
-filters to stores configured in config.yml, and sends a Discord notification
-for any tournament not previously seen (tracked in seen.json).
+sends a Discord notification for any tournament not previously seen.
 """
 
 import json
@@ -64,7 +63,6 @@ def send_discord_notification(message: str):
 
 
 def dismiss_cookie_banner(page):
-    """Dismisses the OneTrust cookie consent banner."""
     try:
         page.click("#onetrust-accept-btn-handler", timeout=8000)
         page.wait_for_timeout(500)
@@ -73,7 +71,6 @@ def dismiss_cookie_banner(page):
 
 
 def handle_language_select(page):
-    """Handles the 'Select Language' popup that appears on first visit."""
     try:
         page.wait_for_selector("text=Select Language", timeout=8000)
     except Exception:
@@ -108,7 +105,6 @@ def handle_language_select(page):
 
 
 def close_news_popup(page):
-    """Closes the News popup modal using JavaScript."""
     try:
         page.wait_for_selector(".modal", timeout=3000)
     except Exception:
@@ -119,9 +115,7 @@ def close_news_popup(page):
             const modal = document.querySelector('.modal');
             if (modal) {
                 const buttons = modal.querySelectorAll('button, [role=button], .btn');
-                if (buttons.length > 0) {
-                    buttons[buttons.length - 1].click();
-                }
+                if (buttons.length > 0) buttons[buttons.length - 1].click();
             }
         """)
         page.wait_for_timeout(500)
@@ -144,7 +138,6 @@ def close_news_popup(page):
 
 
 def login(page):
-    """Logs into Bandai Namco ID."""
     if not BANDAI_EMAIL or not BANDAI_PASSWORD:
         print("No BANDAI_EMAIL/BANDAI_PASSWORD set — skipping login.")
         return
@@ -152,7 +145,7 @@ def login(page):
     try:
         page.click("text=Login", timeout=5000)
     except Exception:
-        print("Could not find 'Login' button — page structure may differ.")
+        print("Could not find 'Login' button.")
         return
 
     try:
@@ -182,11 +175,6 @@ def login(page):
 
 
 def scrape_tournaments(page, config):
-    """
-    Flow: Others > Store Search > Filter by Favorite Stores > Search >
-    click 'Search for events at this store' for each favorited store >
-    scrape event cards using real class names confirmed via DevTools.
-    """
     page.goto(BASE_URL, wait_until="networkidle")
 
     dismiss_cookie_banner(page)
@@ -216,14 +204,25 @@ def scrape_tournaments(page, config):
     if DEBUG_MODE:
         page.screenshot(path="debug_4_store_search.png")
 
-    # --- Step 5: Filter by Favorite Stores and Search ---
+    # --- Step 5: Filter by Favorite Stores using JavaScript ---
     try:
-        page.check("input[type='checkbox']", timeout=3000)
-    except Exception:
-        try:
-            page.click("label:has-text('Filter by Favorite Stores')", timeout=5000)
-        except Exception as e:
-            print(f"Could not check Favorite Stores filter: {e}")
+        page.evaluate("""
+            const labels = Array.from(document.querySelectorAll('label, span, div'));
+            const target = labels.find(el => el.textContent.trim().includes('Filter by Favorite Stores'));
+            if (target) {
+                const checkbox = target.closest('label') ||
+                                 target.previousElementSibling ||
+                                 document.querySelector('input[type=checkbox]');
+                if (checkbox && !checkbox.checked) checkbox.click();
+            }
+        """)
+        page.wait_for_timeout(500)
+        print("Attempted to check Favorite Stores filter via JavaScript.")
+    except Exception as e:
+        print(f"Could not check Favorite Stores filter: {e}")
+
+    if DEBUG_MODE:
+        page.screenshot(path="debug_5_before_search.png")
 
     try:
         page.click("button:has-text('Search')", timeout=5000)
@@ -231,7 +230,7 @@ def scrape_tournaments(page, config):
     except Exception as e:
         print(f"Could not click Search: {e}")
     if DEBUG_MODE:
-        page.screenshot(path="debug_5_after_store_search.png")
+        page.screenshot(path="debug_6_after_store_search.png")
 
     # --- Step 6: For each store click "Search for events at this store" ---
     results = []
@@ -249,7 +248,6 @@ def scrape_tournaments(page, config):
             if DEBUG_MODE:
                 page.screenshot(path=f"debug_store_{i}_events.png")
 
-            # Real class names confirmed via DevTools inspection
             cards = page.query_selector_all("li.event-item")
             print(f"  Store {i}: found {len(cards)} event card(s).")
 
